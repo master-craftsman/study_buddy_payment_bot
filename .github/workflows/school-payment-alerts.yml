@@ -1,0 +1,37 @@
+name: School payment alerts
+
+on:
+  schedule:
+    # GitHub Actions cron uses UTC. 09:00 in Astana/Asia/Almaty is 04:00 UTC.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  send-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      NOTION_VERSION: "2026-03-11"
+      NOTION_QUERY_PATH: data_sources
+      SUBSCRIPTIONS_DB_ID: 8f64b263-4e4a-4fa3-9688-057fddfeeda2
+      ATTENDANCE_DB_ID: 7993972d-0d0c-45af-9c7f-14ac30e55866
+      LESSONS_DB_ID: 0b065389-e98e-465a-b8c7-93ccd9f8a34f
+      LOW_REMAINING_THRESHOLD: "2"
+      DAYS_BEFORE_END_ALERT: "5"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run alerts
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 school_payment_alerts.py
