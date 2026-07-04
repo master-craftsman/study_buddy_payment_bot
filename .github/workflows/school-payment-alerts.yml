@@ -9,6 +9,7 @@ on:
 jobs:
   send-alerts:
     runs-on: ubuntu-latest
+    environment: .env
     timeout-minutes: 10
 
     env:
@@ -28,6 +29,23 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Validate secrets
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          test -n "$NOTION_TOKEN" || (echo "NOTION_TOKEN secret is missing" && exit 1)
+          test -n "$TELEGRAM_BOT_TOKEN" || (echo "TELEGRAM_BOT_TOKEN secret is missing" && exit 1)
+          test -n "$TELEGRAM_CHAT_ID" || (echo "TELEGRAM_CHAT_ID secret is missing" && exit 1)
+          case "$NOTION_TOKEN" in
+            NOTION_TOKEN=*|Notion-api-token=*) echo "NOTION_TOKEN must contain only the token value, not KEY=value" && exit 1 ;;
+          esac
+          case "$NOTION_TOKEN" in
+            ntn_*) ;;
+            *) echo "NOTION_TOKEN does not look like a Notion token" && exit 1 ;;
+          esac
 
       - name: Run alerts
         env:

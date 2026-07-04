@@ -78,12 +78,33 @@ Workflow также можно запустить вручную через `Act
 
 ### GitHub Secrets
 
-В репозитории открой `Settings -> Secrets and variables -> Actions -> New repository secret` и добавь:
+Если используешь repository secrets, открой `Settings -> Secrets and variables -> Actions -> New repository secret` и добавь:
 
 ```text
 NOTION_TOKEN
 TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID
+```
+
+Если используешь GitHub Environment secrets, workflow сейчас привязан к environment с именем `.env`:
+
+```yaml
+environment: .env
+```
+
+В этом случае секреты нужно добавлять в `Settings -> Environments -> .env -> Environment secrets`.
+
+Важно: значение `NOTION_TOKEN` должно быть только самим токеном, без имени переменной и без кавычек:
+
+```text
+ntn_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Неправильно:
+
+```text
+NOTION_TOKEN=ntn_xxx
+Notion-api-token=ntn_xxx
 ```
 
 ID баз уже прописаны в workflow как обычные env-переменные:
