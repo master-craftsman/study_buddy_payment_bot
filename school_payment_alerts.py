@@ -25,7 +25,12 @@ P_LESSON_TEACHER = "Преподаватель"
 P_LESSON_ROOM = "Кабинет"
 P_LESSON_STATUS = "Статус урока"
 
-ACTIVE_SUB_STATUSES = {"Активен", "Заканчивается", "Долг", ""}
+P_TG_CHAT_NAME = "Название"
+P_TG_CHAT_TARGET = "Chat ID или @username"
+P_TG_CHAT_THREAD_ID = "Thread ID"
+P_TG_CHAT_ACTIVE = "Активен?"
+
+ACTIVE_SUB_STATUSES = {"Активен", "Заканчивается", "Долг", "Исчерпан", ""}
 CHARGED_ATTENDANCE_STATUSES = {"Был", "Сгорело"}
 PLANNED_ATTENDANCE_STATUSES = {"Запланировано"}
 OPEN_LESSON_STATUSES = {"Запланирован", ""}
@@ -44,11 +49,26 @@ def title_value(page, name):
     return ""
 
 
+def first_title_value(page, names):
+    for name in names:
+        value = title_value(page, name)
+        if value:
+            return value
+    return ""
+
+
 def rich_text_value(page, name):
     p = prop(page, name)
     if p.get("type") == "rich_text":
         return "".join(part.get("plain_text", "") for part in p.get("rich_text", []))
     return ""
+
+
+def checkbox_value(page, name):
+    p = prop(page, name)
+    if p.get("type") == "checkbox":
+        return bool(p.get("checkbox"))
+    return False
 
 
 def number_value(page, name):
@@ -130,17 +150,29 @@ def date_value(page, name):
     return start.date() if start else None
 
 
-def send_telegram_message(text):
+def lesson_count_text(count):
+    abs_count = abs(count)
+    if abs_count % 10 == 1 and abs_count % 100 != 11:
+        word = "занятие"
+    elif abs_count % 10 in {2, 3, 4} and abs_count % 100 not in {12, 13, 14}:
+        word = "занятия"
+    else:
+        word = "занятий"
+    return f"{count} {word}"
+
+
+def send_telegram_message(text, chat_id, message_thread_id=None):
     bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
     if not bot_token or not chat_id:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN and Telegram chat target must be set")
     payload = {
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
+    if message_thread_id:
+        payload["message_thread_id"] = int(message_thread_id)
     request = urllib.request.Request(
         url=f"https://api.telegram.org/bot{bot_token}/sendMessage",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -153,6 +185,26 @@ def send_telegram_message(text):
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Telegram API {exc.code}: {body}") from exc
+
+
+def telegram_recipients(client):
+    recipients_db_id = os.getenv("TELEGRAM_RECIPIENTS_DB_ID")
+    if not recipients_db_id:
+        fallback_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        fallback_thread_id = os.getenv("TELEGRAM_MESSAGE_THREAD_ID", "")
+        return [("TELEGRAM_CHAT_ID", fallback_chat_id, fallback_thread_id)] if fallback_chat_id else []
+
+    recipients = []
+    for page in client.query_database(recipients_db_id):
+        if not checkbox_value(page, P_TG_CHAT_ACTIVE):
+            continue
+        target = rich_text_value(page, P_TG_CHAT_TARGET).strip()
+        if not target:
+            continue
+        name = first_title_value(page, (P_TG_CHAT_NAME, "Name")) or target
+        thread_id = rich_text_value(page, P_TG_CHAT_THREAD_ID).strip()
+        recipients.append((name, target, thread_id))
+    return recipients
 
 
 def update_alert_key(client, page_id, value):
@@ -212,7 +264,7 @@ def payment_alerts(client, today):
         notes = []
         level = "yellow"
         if remaining_fact <= low_remaining:
-            reasons.append(f"осталось {remaining_fact} занятий")
+            reasons.append(f"осталось {lesson_count_text(remaining_fact)}")
         if remaining_fact == 1:
             notes.append(
                 "Напишите преподавателю: на последнем уроке нужно сделать "
@@ -328,20 +380,27 @@ def main():
 
     if alerts:
         message = "🔔 <b>Контроль школы</b>\n\n" + "\n\n".join(alerts)
+        recipients = telegram_recipients(client)
         if (
             os.getenv("TELEGRAM_DRY_RUN") == "1"
             or not os.getenv("TELEGRAM_BOT_TOKEN")
-            or not os.getenv("TELEGRAM_CHAT_ID")
+            or not recipients
         ):
             print("Telegram credentials are missing; previewing message without sending.")
             print(message)
+            if recipients:
+                print("Recipients:")
+                for name, target, thread_id in recipients:
+                    thread_text = f" thread={thread_id}" if thread_id else ""
+                    print(f"- {name}: {target}{thread_text}")
             print(f"Prepared {len(alerts)} alert(s).")
             return
 
-        send_telegram_message(message)
+        for _, chat_id, thread_id in recipients:
+            send_telegram_message(message, chat_id, thread_id)
         for page_id, alert_key in alert_updates:
             update_alert_key(client, page_id, alert_key)
-        print(f"Sent {len(alerts)} alert(s).")
+        print(f"Sent {len(alerts)} alert(s) to {len(recipients)} chat(s).")
     else:
         print("No alerts.")
 

@@ -1,0 +1,60 @@
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Runtime logs and local outputs
+logs/
+*.log
+*.out
+*.err
+
+# Python cache and build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS and filesystem metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Local tool state
+.python-version

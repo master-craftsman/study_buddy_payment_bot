@@ -49,8 +49,8 @@ NOTION_QUERY_PATH=data_sources
 SUBSCRIPTIONS_DB_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ATTENDANCE_DB_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 LESSONS_DB_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TELEGRAM_RECIPIENTS_DB_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TELEGRAM_BOT_TOKEN=123456:xxx
-TELEGRAM_CHAT_ID=123456789
 ```
 
 Опционально:
@@ -59,9 +59,12 @@ TELEGRAM_CHAT_ID=123456789
 LOW_REMAINING_THRESHOLD=2
 DAYS_BEFORE_END_ALERT=5
 TELEGRAM_DRY_RUN=1
+TELEGRAM_CHAT_ID=123456789
 ```
 
 `TELEGRAM_DRY_RUN=1` полезен для проверки: скрипт прочитает Notion и напечатает текст сообщения, но не отправит его в Telegram.
+
+Получатели Telegram берутся из базы `📣 Telegram рассылка`. В строке должны быть заполнены `Название`, `Chat ID или @username` и `Активен?`. Для отправки в конкретный топик/ветку группы заполни `Thread ID`. Для личных чатов обычно нужен numeric `chat_id`; `@username` подходит для публичных групп или каналов, куда добавлен бот.
 
 ## Запуск перед рабочим днем через GitHub Actions
 
@@ -83,7 +86,6 @@ Workflow также можно запустить вручную через `Act
 ```text
 NOTION_TOKEN
 TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID
 ```
 
 Если используешь GitHub Environment secrets, workflow сейчас привязан к environment с именем `.env`:
@@ -113,6 +115,7 @@ ID баз уже прописаны в workflow как обычные env-пер
 SUBSCRIPTIONS_DB_ID=8f64b263-4e4a-4fa3-9688-057fddfeeda2
 ATTENDANCE_DB_ID=7993972d-0d0c-45af-9c7f-14ac30e55866
 LESSONS_DB_ID=0b065389-e98e-465a-b8c7-93ccd9f8a34f
+TELEGRAM_RECIPIENTS_DB_ID=a0ef411a-be10-45bb-bfcb-16efee2f2876
 ```
 
 Локальный `.env` нужен только для запуска на твоем компьютере. Он добавлен в `.gitignore`, потому что содержит секреты.

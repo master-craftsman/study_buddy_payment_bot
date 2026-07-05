@@ -18,6 +18,7 @@ jobs:
       SUBSCRIPTIONS_DB_ID: 8f64b263-4e4a-4fa3-9688-057fddfeeda2
       ATTENDANCE_DB_ID: 7993972d-0d0c-45af-9c7f-14ac30e55866
       LESSONS_DB_ID: 0b065389-e98e-465a-b8c7-93ccd9f8a34f
+      TELEGRAM_RECIPIENTS_DB_ID: a0ef411a-be10-45bb-bfcb-16efee2f2876
       LOW_REMAINING_THRESHOLD: "2"
       DAYS_BEFORE_END_ALERT: "5"
 
@@ -35,10 +36,11 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_RECIPIENTS_DB_ID: ${{ env.TELEGRAM_RECIPIENTS_DB_ID }}
         run: |
           test -n "$NOTION_TOKEN" || (echo "NOTION_TOKEN secret is missing" && exit 1)
           test -n "$TELEGRAM_BOT_TOKEN" || (echo "TELEGRAM_BOT_TOKEN secret is missing" && exit 1)
-          test -n "$TELEGRAM_CHAT_ID" || (echo "TELEGRAM_CHAT_ID secret is missing" && exit 1)
+          test -n "$TELEGRAM_CHAT_ID$TELEGRAM_RECIPIENTS_DB_ID" || (echo "TELEGRAM_CHAT_ID or TELEGRAM_RECIPIENTS_DB_ID is required" && exit 1)
           case "$NOTION_TOKEN" in
             NOTION_TOKEN=*|Notion-api-token=*) echo "NOTION_TOKEN must contain only the token value, not KEY=value" && exit 1 ;;
           esac
