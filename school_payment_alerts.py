@@ -209,10 +209,22 @@ def payment_alerts(client, today):
         remaining_after_schedule = remaining_fact - planned_future_count
 
         reasons = []
+        notes = []
         level = "yellow"
         if remaining_fact <= low_remaining:
             reasons.append(f"осталось {remaining_fact} занятий")
-        if remaining_after_schedule == 0:
+        if remaining_fact == 1:
+            notes.append(
+                "Напишите преподавателю: на последнем уроке нужно сделать "
+                "финальный тест, проревьюить все успехи и оценить качество "
+                "усвоения материала учеником."
+            )
+        if remaining_fact == 0:
+            notes.append(
+                "Напишите преподавателю, что нужно выслать отчет по ученику. "
+                "Напишите клиенту и спросите, будут ли они продлевать абонемент."
+            )
+        if remaining_fact <= low_remaining and remaining_after_schedule == 0:
             reasons.append("все оплаченные занятия уже расписаны")
             level = "orange"
         if remaining_after_schedule < 0:
@@ -233,26 +245,28 @@ def payment_alerts(client, today):
         alert_key = (
             f"level={level};remaining={remaining_fact};"
             f"after_schedule={remaining_after_schedule};charged={charged_count};"
-            f"planned={planned_future_count};end={end_date}"
+            f"planned={planned_future_count};end={end_date};notes={len(notes)}"
         )
         if alert_key == previous_alert_key:
             continue
 
         icon = {"yellow": "⚠️", "orange": "🟠", "red": "🚨"}[level]
         end_text = end_date.isoformat() if end_date else "не указана"
+        alert_lines = [
+            f"{icon} <b>{html.escape(sub_name)}</b>",
+            f"Причина: {html.escape('; '.join(reasons))}",
+            f"Оплачено: {paid_lessons}",
+            f"Списано: {charged_count}",
+            f"Запланировано вперед: {planned_future_count}",
+            f"Остаток факт: {remaining_fact}",
+            f"Остаток после расписания: {remaining_after_schedule}",
+            f"Дата окончания: {html.escape(end_text)}",
+        ]
+        if notes:
+            alert_lines.append("Notes:")
+            alert_lines.extend(html.escape(note) for note in notes)
         alerts.append(
-            "\n".join(
-                [
-                    f"{icon} <b>{html.escape(sub_name)}</b>",
-                    f"Причина: {html.escape('; '.join(reasons))}",
-                    f"Оплачено: {paid_lessons}",
-                    f"Списано: {charged_count}",
-                    f"Запланировано вперед: {planned_future_count}",
-                    f"Остаток факт: {remaining_fact}",
-                    f"Остаток после расписания: {remaining_after_schedule}",
-                    f"Дата окончания: {html.escape(end_text)}",
-                ]
-            )
+            "\n".join(alert_lines)
         )
         alert_updates.append((sub_id, alert_key))
     return alerts, alert_updates
