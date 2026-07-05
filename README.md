@@ -63,15 +63,15 @@ TELEGRAM_DRY_RUN=1
 
 `TELEGRAM_DRY_RUN=1` полезен для проверки: скрипт прочитает Notion и напечатает текст сообщения, но не отправит его в Telegram.
 
-## Ежедневный запуск в 09:00 по Астане через GitHub Actions
+## Запуск перед рабочим днем через GitHub Actions
 
 Workflow уже добавлен в `.github/workflows/school-payment-alerts.yml`.
 
-GitHub Actions использует UTC для cron-расписания. 09:00 в Астане (`Asia/Almaty`) соответствует 04:00 UTC, поэтому в workflow стоит:
+GitHub Actions использует UTC для cron-расписания. Ежедневный запуск стоит в 08:27 по Астане (`Asia/Almaty`), что соответствует 03:27 UTC:
 
 ```yaml
 schedule:
-  - cron: "0 4 * * *"
+  - cron: "27 3 * * *"
 ```
 
 Workflow также можно запустить вручную через `Actions -> School payment alerts -> Run workflow`.
