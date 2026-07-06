@@ -161,10 +161,22 @@ def lesson_count_text(count):
     return f"{count} {word}"
 
 
+def clean_text_value(value):
+    return (value or "").strip()
+
+
+def has_whitespace(value):
+    return any(char.isspace() for char in value)
+
+
 def send_telegram_message(text, chat_id, message_thread_id=None):
-    bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+    bot_token = clean_text_value(os.environ["TELEGRAM_BOT_TOKEN"])
+    chat_id = clean_text_value(chat_id)
+    message_thread_id = clean_text_value(message_thread_id)
     if not bot_token or not chat_id:
         raise RuntimeError("TELEGRAM_BOT_TOKEN and Telegram chat target must be set")
+    if has_whitespace(bot_token):
+        raise RuntimeError("TELEGRAM_BOT_TOKEN must not contain spaces or line breaks")
     payload = {
         "chat_id": chat_id,
         "text": text,
@@ -190,19 +202,19 @@ def send_telegram_message(text, chat_id, message_thread_id=None):
 def telegram_recipients(client):
     recipients_db_id = os.getenv("TELEGRAM_RECIPIENTS_DB_ID")
     if not recipients_db_id:
-        fallback_chat_id = os.getenv("TELEGRAM_CHAT_ID")
-        fallback_thread_id = os.getenv("TELEGRAM_MESSAGE_THREAD_ID", "")
+        fallback_chat_id = clean_text_value(os.getenv("TELEGRAM_CHAT_ID"))
+        fallback_thread_id = clean_text_value(os.getenv("TELEGRAM_MESSAGE_THREAD_ID"))
         return [("TELEGRAM_CHAT_ID", fallback_chat_id, fallback_thread_id)] if fallback_chat_id else []
 
     recipients = []
     for page in client.query_database(recipients_db_id):
         if not checkbox_value(page, P_TG_CHAT_ACTIVE):
             continue
-        target = rich_text_value(page, P_TG_CHAT_TARGET).strip()
+        target = clean_text_value(rich_text_value(page, P_TG_CHAT_TARGET))
         if not target:
             continue
         name = first_title_value(page, (P_TG_CHAT_NAME, "Name")) or target
-        thread_id = rich_text_value(page, P_TG_CHAT_THREAD_ID).strip()
+        thread_id = clean_text_value(rich_text_value(page, P_TG_CHAT_THREAD_ID))
         recipients.append((name, target, thread_id))
     return recipients
 
@@ -242,6 +254,8 @@ def payment_alerts(client, today):
         end_date = date_value(sub, P_SUB_END)
         previous_alert_key = rich_text_value(sub, P_SUB_LAST_ALERT)
         related_attendances = attendance_by_subscription.get(sub_id, [])
+        if paid_lessons <= 0 and not related_attendances:
+            continue
 
         charged_count = 0
         planned_future_count = 0
