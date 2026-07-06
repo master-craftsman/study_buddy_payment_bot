@@ -70,14 +70,11 @@ TELEGRAM_CHAT_ID=123456789
 
 Workflow уже добавлен в `.github/workflows/school-payment-alerts.yml`.
 
-GitHub Actions использует UTC для cron-расписания. Ежедневные проверки стоят утром по Астане (`Asia/Almaty`): 08:17, 08:27, 08:47 и 09:17. Несколько слотов нужны, чтобы снизить риск пропуска GitHub scheduler; одинаковые уведомления не дублируются из-за поля `TG ключ последнего алерта`.
+GitHub Actions использует UTC для cron-расписания. Ежедневный запуск стоит в 09:00 по Астане (`Asia/Almaty`), что соответствует 04:00 UTC:
 
 ```yaml
 schedule:
-  - cron: "17 3 * * *"
-  - cron: "27 3 * * *"
-  - cron: "47 3 * * *"
-  - cron: "17 4 * * *"
+  - cron: "0 4 * * *"
 ```
 
 Workflow также можно запустить вручную через `Actions -> School payment alerts -> Run workflow`.

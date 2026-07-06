@@ -2,11 +2,8 @@ name: School payment alerts
 
 on:
   schedule:
-    # GitHub Actions cron uses UTC. These are 08:17, 08:27, 08:47, and 09:17 in Astana/Asia/Almaty.
-    - cron: "17 3 * * *"
-    - cron: "27 3 * * *"
-    - cron: "47 3 * * *"
-    - cron: "17 4 * * *"
+    # GitHub Actions cron uses UTC. 09:00 in Astana/Asia/Almaty is 04:00 UTC.
+    - cron: "0 4 * * *"
   workflow_dispatch:
 
 jobs:
