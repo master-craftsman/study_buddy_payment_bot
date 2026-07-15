@@ -19,6 +19,8 @@ P_SUB_END = "Дата окончания"
 P_SUB_STUDENT = "Ученик"
 
 P_ATT_SUBSCRIPTION = "Абонемент"
+P_ATT_LESSON = "Занятие"
+P_ATT_NAME = "Название"
 P_ATT_STATUS = "Статус участия"
 P_ATT_DATE = "Дата урока"
 
@@ -27,6 +29,7 @@ P_LESSON_DATE = "Дата и время"
 P_LESSON_TEACHER = "Преподаватель"
 P_LESSON_ROOM = "Кабинет"
 P_LESSON_STATUS = "Статус урока"
+P_LESSON_SUBSCRIPTIONS = "Абонементы занятия"
 
 P_TG_CHAT_NAME = "Название"
 P_TG_CHAT_TARGET = "Chat ID или @username"
@@ -282,6 +285,50 @@ def telegram_recipients(client):
     return recipients
 
 
+def sync_missing_attendances(client):
+    lessons_db_id = os.getenv("LESSONS_DB_ID")
+    attendance_db_id = os.getenv("ATTENDANCE_DB_ID")
+    if not lessons_db_id or not attendance_db_id:
+        return 0
+
+    lessons = client.query_database(lessons_db_id)
+    attendances = client.query_database(attendance_db_id)
+    existing_pairs = set()
+    for attendance in attendances:
+        subscription_ids = relation_ids(attendance, P_ATT_SUBSCRIPTION)
+        lesson_ids = relation_ids(attendance, P_ATT_LESSON)
+        if len(subscription_ids) == 1 and len(lesson_ids) == 1:
+            existing_pairs.add((lesson_ids[0], subscription_ids[0]))
+
+    created = 0
+    for lesson in lessons:
+        if select_value(lesson, P_LESSON_STATUS) not in OPEN_LESSON_STATUSES:
+            continue
+        lesson_name = title_value(lesson, P_LESSON_NAME) or "Участие"
+        for subscription_id in relation_ids(lesson, P_LESSON_SUBSCRIPTIONS):
+            pair = (lesson["id"], subscription_id)
+            if pair in existing_pairs:
+                continue
+            client.create_page(
+                attendance_db_id,
+                {
+                    P_ATT_NAME: {
+                        "title": [
+                            {"type": "text", "text": {"content": lesson_name}}
+                        ]
+                    },
+                    P_ATT_STATUS: {"select": {"name": "Запланировано"}},
+                    P_ATT_SUBSCRIPTION: {
+                        "relation": [{"id": subscription_id}]
+                    },
+                    P_ATT_LESSON: {"relation": [{"id": lesson["id"]}]},
+                },
+            )
+            existing_pairs.add(pair)
+            created += 1
+    return created
+
+
 def payment_alerts(client, today):
     subscriptions = client.query_database(os.environ["SUBSCRIPTIONS_DB_ID"])
     attendances = client.query_database(os.environ["ATTENDANCE_DB_ID"])
@@ -289,9 +336,24 @@ def payment_alerts(client, today):
     days_before_end = int(os.getenv("DAYS_BEFORE_END_ALERT", "5"))
 
     attendance_by_subscription = defaultdict(list)
+    data_quality_alerts = []
     for att in attendances:
-        for sub_id in relation_ids(att, P_ATT_SUBSCRIPTION):
-            attendance_by_subscription[sub_id].append(att)
+        subscription_ids = relation_ids(att, P_ATT_SUBSCRIPTION)
+        lesson_ids = relation_ids(att, P_ATT_LESSON)
+        attendance_name = title_value(att, P_ATT_NAME) or att.get("url", "Участие")
+        if len(subscription_ids) != 1 or len(lesson_ids) != 1:
+            data_quality_alerts.append(
+                "\n".join(
+                    [
+                        "🚨 <b>Ошибка в посещаемости</b>",
+                        f"Участие: {html.escape(attendance_name)}",
+                        "Нужно выбрать ровно один абонемент и одно занятие.",
+                        f"Абонементов: {len(subscription_ids)}; занятий: {len(lesson_ids)}",
+                    ]
+                )
+            )
+            continue
+        attendance_by_subscription[subscription_ids[0]].append(att)
 
     alerts = []
     for sub in actual_subscriptions(subscriptions, today):
@@ -311,11 +373,29 @@ def payment_alerts(client, today):
             if att_status in CHARGED_ATTENDANCE_STATUSES:
                 charged_count += 1
             if (
-                att_status in PLANNED_ATTENDANCE_STATUSES
+                (att_status in PLANNED_ATTENDANCE_STATUSES or not att_status)
                 and att_date is not None
                 and att_date >= today
             ):
                 planned_future_count += 1
+            if (
+                (not att_status or att_status in PLANNED_ATTENDANCE_STATUSES)
+                and att_date is not None
+                and att_date < today
+            ):
+                attendance_name = title_value(att, P_ATT_NAME) or att.get(
+                    "url", "Участие"
+                )
+                data_quality_alerts.append(
+                    "\n".join(
+                        [
+                            "⚠️ <b>Не отмечена посещаемость</b>",
+                            f"Участие: {html.escape(attendance_name)}",
+                            f"Дата: {att_date.isoformat()}",
+                            "Выберите статус: Был, Сгорело, Отмена без списания или Перенос.",
+                        ]
+                    )
+                )
 
         remaining_fact = paid_lessons - charged_count
         remaining_after_schedule = remaining_fact - planned_future_count
@@ -372,7 +452,7 @@ def payment_alerts(client, today):
         alerts.append(
             "\n".join(alert_lines)
         )
-    return alerts
+    return data_quality_alerts + alerts
 
 
 def ranges_overlap(first_start, first_end, second_start, second_end):
@@ -426,6 +506,9 @@ def main():
     load_env_file()
     client = NotionClient()
     today = date.today()
+    created_attendances = 0
+    if os.getenv("TELEGRAM_DRY_RUN") != "1":
+        created_attendances = sync_missing_attendances(client)
     alerts = payment_alerts(client, today)
     alerts.extend(conflict_alerts(client))
 
@@ -449,8 +532,12 @@ def main():
 
         for _, chat_id, thread_id in recipients:
             send_telegram_message(message, chat_id, thread_id)
+        if created_attendances:
+            print(f"Created {created_attendances} attendance row(s).")
         print(f"Sent {len(alerts)} alert(s) to {len(recipients)} chat(s).")
     else:
+        if created_attendances:
+            print(f"Created {created_attendances} attendance row(s).")
         print("No alerts.")
 
 

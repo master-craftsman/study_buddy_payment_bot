@@ -107,3 +107,16 @@ class NotionClient:
 
     def update_page_properties(self, page_id, properties):
         return self.request("PATCH", f"/pages/{page_id}", {"properties": properties})
+
+    def create_page(self, data_source_id, properties):
+        return self.request(
+            "POST",
+            "/pages",
+            {
+                "parent": {
+                    "type": "data_source_id",
+                    "data_source_id": data_source_id,
+                },
+                "properties": properties,
+            },
+        )
