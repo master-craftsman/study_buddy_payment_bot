@@ -65,7 +65,17 @@ class NotionClient:
         )
 
     def update_database(self, database_id, properties):
-        return self.request("PATCH", f"/databases/{database_id}", {"properties": properties})
+        try:
+            return self.request("PATCH", f"/databases/{database_id}", {"properties": properties})
+        except NotionError as database_error:
+            if "object_not_found" not in str(database_error) and "Invalid request URL" not in str(database_error):
+                raise
+            try:
+                return self.request("PATCH", f"/data_sources/{database_id}", {"properties": properties})
+            except NotionError as data_source_error:
+                raise NotionError(
+                    f"{database_error}\nFallback data source update failed: {data_source_error}"
+                ) from data_source_error
 
     def query_database(self, database_id, payload=None):
         results = []
