@@ -21,6 +21,7 @@ P_SUB_STUDENT = "Ученик"
 P_ATT_SUBSCRIPTION = "Абонемент"
 P_ATT_LESSON = "Занятие"
 P_ATT_NAME = "Название"
+P_ATT_STUDENT = "Ученик"
 P_ATT_STATUS = "Статус участия"
 P_ATT_DATE = "Дата урока"
 
@@ -38,7 +39,7 @@ P_TG_CHAT_ACTIVE = "Активен?"
 
 ACTIVE_SUB_STATUSES = {"Активен", "Заканчивается", "Долг", "Исчерпан", ""}
 CLOSED_MANUAL_SUB_STATUSES = {"Закрыт"}
-INCLUDED_MANUAL_SUB_STATUSES = {"В расчете"}
+INCLUDED_MANUAL_SUB_STATUSES = {"В расчете", "Долг"}
 CHARGED_ATTENDANCE_STATUSES = {"Был", "Сгорело"}
 PLANNED_ATTENDANCE_STATUSES = {"Запланировано"}
 OPEN_LESSON_STATUSES = {"Запланирован", ""}
@@ -159,7 +160,19 @@ def date_value(page, name):
 
 
 def subscription_period(page):
-    start, end = date_range_value(page, P_SUB_PERIOD)
+    period = prop(page, P_SUB_PERIOD)
+    data = None
+    if period.get("type") == "date":
+        data = period.get("date")
+    elif period.get("type") == "formula":
+        data = period.get("formula", {}).get("date")
+    elif period.get("type") == "rollup":
+        rollup = period.get("rollup", {})
+        data = rollup.get("date")
+    if not data:
+        return None, None
+    start = parse_iso_date(data.get("start"))
+    end = parse_iso_date(data.get("end"))
     return (start.date() if start else None, end.date() if end else None)
 
 
@@ -214,6 +227,24 @@ def actual_subscriptions(subscriptions, today):
         selected[subscription["id"]] = subscription
 
     return list(selected.values())
+
+
+def subscription_lesson_issue(subscription, lesson_date):
+    manual_status = select_value(subscription, P_SUB_MANUAL_STATUS)
+    if manual_status in CLOSED_MANUAL_SUB_STATUSES:
+        return "абонемент закрыт вручную"
+
+    student_ids = relation_ids(subscription, P_SUB_STUDENT)
+    if len(student_ids) != 1:
+        return f"в абонементе должно быть ровно одно поле Ученик; сейчас: {len(student_ids)}"
+
+    period_start, period_end = subscription_period(subscription)
+    if lesson_date is not None:
+        if period_start is not None and lesson_date < period_start:
+            return "дата занятия раньше периода абонемента"
+        if period_end is not None and lesson_date > period_end:
+            return "дата занятия позже периода абонемента"
+    return ""
 
 
 def lesson_count_text(count):
@@ -288,30 +319,48 @@ def telegram_recipients(client):
 def sync_missing_attendances(client):
     lessons_db_id = os.getenv("LESSONS_DB_ID")
     attendance_db_id = os.getenv("ATTENDANCE_DB_ID")
-    if not lessons_db_id or not attendance_db_id:
+    subscriptions_db_id = os.getenv("SUBSCRIPTIONS_DB_ID")
+    if not lessons_db_id or not attendance_db_id or not subscriptions_db_id:
         return 0
 
     lessons = client.query_database(lessons_db_id)
     attendances = client.query_database(attendance_db_id)
+    subscriptions = client.query_database(subscriptions_db_id)
+    subscriptions_by_id = {subscription["id"]: subscription for subscription in subscriptions}
+    student_by_subscription = {}
+    for subscription in subscriptions:
+        student_ids = relation_ids(subscription, P_SUB_STUDENT)
+        if len(student_ids) == 1:
+            student_by_subscription[subscription["id"]] = student_ids[0]
+
     existing_pairs = set()
     for attendance in attendances:
         subscription_ids = relation_ids(attendance, P_ATT_SUBSCRIPTION)
         lesson_ids = relation_ids(attendance, P_ATT_LESSON)
         if len(subscription_ids) == 1 and len(lesson_ids) == 1:
             existing_pairs.add((lesson_ids[0], subscription_ids[0]))
+            student_id = student_by_subscription.get(subscription_ids[0])
+            if student_id and relation_ids(attendance, P_ATT_STUDENT) != [student_id]:
+                client.update_page_properties(
+                    attendance["id"],
+                    {P_ATT_STUDENT: {"relation": [{"id": student_id}]}},
+                )
 
     created = 0
     for lesson in lessons:
+        lesson_subscription_ids = relation_ids(lesson, P_LESSON_SUBSCRIPTIONS)
         if select_value(lesson, P_LESSON_STATUS) not in OPEN_LESSON_STATUSES:
             continue
         lesson_name = title_value(lesson, P_LESSON_NAME) or "Участие"
-        for subscription_id in relation_ids(lesson, P_LESSON_SUBSCRIPTIONS):
+        lesson_date = date_value(lesson, P_LESSON_DATE)
+        for subscription_id in lesson_subscription_ids:
+            subscription = subscriptions_by_id.get(subscription_id)
+            if subscription is None or subscription_lesson_issue(subscription, lesson_date):
+                continue
             pair = (lesson["id"], subscription_id)
             if pair in existing_pairs:
                 continue
-            client.create_page(
-                attendance_db_id,
-                {
+            properties = {
                     P_ATT_NAME: {
                         "title": [
                             {"type": "text", "text": {"content": lesson_name}}
@@ -322,11 +371,67 @@ def sync_missing_attendances(client):
                         "relation": [{"id": subscription_id}]
                     },
                     P_ATT_LESSON: {"relation": [{"id": lesson["id"]}]},
-                },
-            )
+                }
+            student_id = student_by_subscription.get(subscription_id)
+            if student_id:
+                properties[P_ATT_STUDENT] = {"relation": [{"id": student_id}]}
+            client.create_page(attendance_db_id, properties)
             existing_pairs.add(pair)
             created += 1
     return created
+
+
+def lesson_configuration_alerts(client, today):
+    lessons_db_id = os.getenv("LESSONS_DB_ID")
+    subscriptions_db_id = os.getenv("SUBSCRIPTIONS_DB_ID")
+    if not lessons_db_id or not subscriptions_db_id:
+        return []
+
+    lessons = client.query_database(lessons_db_id)
+    subscriptions = {
+        subscription["id"]: subscription
+        for subscription in client.query_database(subscriptions_db_id)
+    }
+    issues = defaultdict(list)
+    for lesson in lessons:
+        if select_value(lesson, P_LESSON_STATUS) not in OPEN_LESSON_STATUSES:
+            continue
+        lesson_name = title_value(lesson, P_LESSON_NAME) or lesson.get(
+            "url", "Занятие"
+        )
+        lesson_date = date_value(lesson, P_LESSON_DATE)
+        if lesson_date is not None and lesson_date < today:
+            continue
+        for subscription_id in relation_ids(lesson, P_LESSON_SUBSCRIPTIONS):
+            subscription = subscriptions.get(subscription_id)
+            if subscription is None:
+                issue = "абонемент не найден или недоступен интеграции"
+                subscription_name = subscription_id
+            else:
+                issue = subscription_lesson_issue(subscription, lesson_date)
+                subscription_name = title_value(subscription, P_SUB_NAME) or subscription.get(
+                    "url", "Абонемент"
+                )
+            if not issue:
+                continue
+            date_text = lesson_date.isoformat() if lesson_date else "не указана"
+            issues[(subscription_name, issue)].append(
+                f"{html.escape(lesson_name)} ({date_text})"
+            )
+    alerts = []
+    for (subscription_name, issue), lessons_with_dates in issues.items():
+        alerts.append(
+            "\n".join(
+                [
+                    "🚨 <b>Ошибка состава занятия</b>",
+                    f"Абонемент: {html.escape(subscription_name)}",
+                    f"Причина: {html.escape(issue)}.",
+                    f"Будущих занятий: {len(lessons_with_dates)}",
+                    "Занятия: " + "; ".join(lessons_with_dates),
+                ]
+            )
+        )
+    return alerts
 
 
 def payment_alerts(client, today):
@@ -510,6 +615,7 @@ def main():
     if os.getenv("TELEGRAM_DRY_RUN") != "1":
         created_attendances = sync_missing_attendances(client)
     alerts = payment_alerts(client, today)
+    alerts.extend(lesson_configuration_alerts(client, today))
     alerts.extend(conflict_alerts(client))
 
     if alerts:
