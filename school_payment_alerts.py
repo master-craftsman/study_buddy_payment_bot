@@ -11,9 +11,12 @@ from notion_client import NotionClient, load_env_file
 
 P_SUB_NAME = "Название"
 P_SUB_STATUS = "Статус"
+P_SUB_MANUAL_STATUS = "Ручной статус"
 P_SUB_PAID = "Оплачено занятий"
+P_SUB_PAYMENT_DATE = "Дата оплаты"
+P_SUB_PERIOD = "Период"
 P_SUB_END = "Дата окончания"
-P_SUB_LAST_ALERT = "TG ключ последнего алерта"
+P_SUB_STUDENT = "Ученик"
 
 P_ATT_SUBSCRIPTION = "Абонемент"
 P_ATT_STATUS = "Статус участия"
@@ -31,6 +34,8 @@ P_TG_CHAT_THREAD_ID = "Thread ID"
 P_TG_CHAT_ACTIVE = "Активен?"
 
 ACTIVE_SUB_STATUSES = {"Активен", "Заканчивается", "Долг", "Исчерпан", ""}
+CLOSED_MANUAL_SUB_STATUSES = {"Закрыт"}
+INCLUDED_MANUAL_SUB_STATUSES = {"В расчете"}
 CHARGED_ATTENDANCE_STATUSES = {"Был", "Сгорело"}
 PLANNED_ATTENDANCE_STATUSES = {"Запланировано"}
 OPEN_LESSON_STATUSES = {"Запланирован", ""}
@@ -150,6 +155,64 @@ def date_value(page, name):
     return start.date() if start else None
 
 
+def subscription_period(page):
+    start, end = date_range_value(page, P_SUB_PERIOD)
+    return (start.date() if start else None, end.date() if end else None)
+
+
+def subscription_is_open(page):
+    manual_status = select_value(page, P_SUB_MANUAL_STATUS)
+    if manual_status in CLOSED_MANUAL_SUB_STATUSES:
+        return False
+    if manual_status in INCLUDED_MANUAL_SUB_STATUSES:
+        return True
+    return select_value(page, P_SUB_STATUS) in ACTIVE_SUB_STATUSES
+
+
+def subscription_sort_key(page, today):
+    manually_included = (
+        select_value(page, P_SUB_MANUAL_STATUS) in INCLUDED_MANUAL_SUB_STATUSES
+    )
+    period_start, period_end = subscription_period(page)
+    end_date = date_value(page, P_SUB_END)
+    payment_date = date_value(page, P_SUB_PAYMENT_DATE)
+    contains_today = bool(
+        period_start
+        and period_start <= today
+        and (period_end is None or today <= period_end)
+    )
+    latest_date = period_end or period_start or end_date or payment_date or date.min
+    return manually_included, contains_today, latest_date, page.get("created_time", "")
+
+
+def actual_subscriptions(subscriptions, today):
+    by_student = defaultdict(list)
+    without_student = []
+
+    for subscription in subscriptions:
+        if not subscription_is_open(subscription):
+            continue
+        student_ids = relation_ids(subscription, P_SUB_STUDENT)
+        if not student_ids:
+            without_student.append(subscription)
+            continue
+        for student_id in student_ids:
+            by_student[student_id].append(subscription)
+
+    selected = {}
+    for student_subscriptions in by_student.values():
+        subscription = max(
+            student_subscriptions,
+            key=lambda item: subscription_sort_key(item, today),
+        )
+        selected[subscription["id"]] = subscription
+
+    for subscription in without_student:
+        selected[subscription["id"]] = subscription
+
+    return list(selected.values())
+
+
 def lesson_count_text(count):
     abs_count = abs(count)
     if abs_count % 10 == 1 and abs_count % 100 != 11:
@@ -219,17 +282,6 @@ def telegram_recipients(client):
     return recipients
 
 
-def update_alert_key(client, page_id, value):
-    client.update_page_properties(
-        page_id,
-        {
-            P_SUB_LAST_ALERT: {
-                "rich_text": [{"type": "text", "text": {"content": value}}]
-            }
-        },
-    )
-
-
 def payment_alerts(client, today):
     subscriptions = client.query_database(os.environ["SUBSCRIPTIONS_DB_ID"])
     attendances = client.query_database(os.environ["ATTENDANCE_DB_ID"])
@@ -242,17 +294,11 @@ def payment_alerts(client, today):
             attendance_by_subscription[sub_id].append(att)
 
     alerts = []
-    alert_updates = []
-    for sub in subscriptions:
+    for sub in actual_subscriptions(subscriptions, today):
         sub_id = sub["id"]
         sub_name = title_value(sub, P_SUB_NAME) or sub.get("url", "Абонемент")
-        sub_status = select_value(sub, P_SUB_STATUS)
-        if sub_status not in ACTIVE_SUB_STATUSES:
-            continue
-
         paid_lessons = int(number_value(sub, P_SUB_PAID))
         end_date = date_value(sub, P_SUB_END)
-        previous_alert_key = rich_text_value(sub, P_SUB_LAST_ALERT)
         related_attendances = attendance_by_subscription.get(sub_id, [])
         if paid_lessons <= 0 and not related_attendances:
             continue
@@ -308,18 +354,10 @@ def payment_alerts(client, today):
         if not reasons:
             continue
 
-        alert_key = (
-            f"level={level};remaining={remaining_fact};"
-            f"after_schedule={remaining_after_schedule};charged={charged_count};"
-            f"planned={planned_future_count};end={end_date};notes={len(notes)}"
-        )
-        if alert_key == previous_alert_key:
-            continue
-
         icon = {"yellow": "⚠️", "orange": "🟠", "red": "🚨"}[level]
         end_text = end_date.isoformat() if end_date else "не указана"
         alert_lines = [
-            f"{icon} <b>{html.escape(sub_name)}</b>",
+            f"{icon} <b>Имя абонемента:</b> {html.escape(sub_name)}",
             f"Причина: {html.escape('; '.join(reasons))}",
             f"Оплачено: {paid_lessons}",
             f"Списано: {charged_count}",
@@ -334,8 +372,7 @@ def payment_alerts(client, today):
         alerts.append(
             "\n".join(alert_lines)
         )
-        alert_updates.append((sub_id, alert_key))
-    return alerts, alert_updates
+    return alerts
 
 
 def ranges_overlap(first_start, first_end, second_start, second_end):
@@ -389,7 +426,7 @@ def main():
     load_env_file()
     client = NotionClient()
     today = date.today()
-    alerts, alert_updates = payment_alerts(client, today)
+    alerts = payment_alerts(client, today)
     alerts.extend(conflict_alerts(client))
 
     if alerts:
@@ -412,8 +449,6 @@ def main():
 
         for _, chat_id, thread_id in recipients:
             send_telegram_message(message, chat_id, thread_id)
-        for page_id, alert_key in alert_updates:
-            update_alert_key(client, page_id, alert_key)
         print(f"Sent {len(alerts)} alert(s) to {len(recipients)} chat(s).")
     else:
         print("No alerts.")
