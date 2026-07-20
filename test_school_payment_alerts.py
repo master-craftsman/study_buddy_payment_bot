@@ -65,7 +65,9 @@ class SchoolPaymentAlertsTest(unittest.TestCase):
             "Статус": select("Активен"),
         }
         if period:
-            properties["Период"] = notion_date(*period)
+            properties["Дата начала"] = notion_date(period[0])
+            if len(period) > 1 and period[1]:
+                properties["Дата окончания"] = notion_date(period[1])
         return page(page_id, **properties)
 
     def lesson(self, subscription_ids=(), lesson_date="2026-07-15"):

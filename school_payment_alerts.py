@@ -14,7 +14,7 @@ P_SUB_STATUS = "Статус"
 P_SUB_MANUAL_STATUS = "Ручной статус"
 P_SUB_PAID = "Оплачено занятий"
 P_SUB_PAYMENT_DATE = "Дата оплаты"
-P_SUB_PERIOD = "Период"
+P_SUB_PERIOD = "Дата начала"
 P_SUB_END = "Дата окончания"
 P_SUB_STUDENT = "Ученик"
 
@@ -160,20 +160,7 @@ def date_value(page, name):
 
 
 def subscription_period(page):
-    period = prop(page, P_SUB_PERIOD)
-    data = None
-    if period.get("type") == "date":
-        data = period.get("date")
-    elif period.get("type") == "formula":
-        data = period.get("formula", {}).get("date")
-    elif period.get("type") == "rollup":
-        rollup = period.get("rollup", {})
-        data = rollup.get("date")
-    if not data:
-        return None, None
-    start = parse_iso_date(data.get("start"))
-    end = parse_iso_date(data.get("end"))
-    return (start.date() if start else None, end.date() if end else None)
+    return date_value(page, P_SUB_PERIOD), date_value(page, P_SUB_END)
 
 
 def subscription_is_open(page):
